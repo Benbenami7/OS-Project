@@ -3,7 +3,7 @@
 
 #include "graph.h"
 
-// Launches the Raylib window to visualize nodes and edges
+// Launches the Raylib window and runs the milestone 3 animation.
 void run_gui(Graph* g);
 
 #endif // GUI_H

@@ -1,20 +1,31 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
-LDFLAGS = -lraylib -lm
+RAYLIB_FLAGS = -lraylib -lm
 
-SRCS = main.c graph.c gui.c
-OBJS = $(SRCS:.c=.o)
-TARGET = os_project
+DIJKSTRA_TARGET = dijkstra
+SIM_TARGET = sim
 
-all: $(TARGET)
+DIJKSTRA_OBJS = main_dijkstra.o graph.o
+SIM_OBJS = main_sim.o graph.o gui.o
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+.PHONY: all milestone1 milestone2 milestone3 clean
+
+all: milestone3
+
+milestone1: $(DIJKSTRA_TARGET)
+
+milestone2: $(SIM_TARGET)
+
+milestone3: $(SIM_TARGET)
+
+$(DIJKSTRA_TARGET): $(DIJKSTRA_OBJS)
+	$(CC) $(CFLAGS) -o $(DIJKSTRA_TARGET) $(DIJKSTRA_OBJS)
+
+$(SIM_TARGET): $(SIM_OBJS)
+	$(CC) $(CFLAGS) -o $(SIM_TARGET) $(SIM_OBJS) $(RAYLIB_FLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
-
-.PHONY: all clean
+	rm -f *.o $(DIJKSTRA_TARGET) $(SIM_TARGET)

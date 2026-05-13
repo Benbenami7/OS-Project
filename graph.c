@@ -9,34 +9,37 @@ Graph* create_graph(void) {
         perror("Memory allocation failed for Graph");
         return NULL;
     }
+
     g->num_nodes = 0;
     g->num_edges = 0;
     g->query_src = 0;
     g->query_dst = 0;
 
-    // Initialize adjacency matrix with -1 (no edge)
     for (int i = 0; i < MAX_NODES; i++) {
         for (int j = 0; j < MAX_NODES; j++) {
             g->adj_matrix[i][j] = -1;
         }
     }
+
     return g;
 }
 
 void free_graph(Graph* g) {
-    if (g) {
-        free(g);
-    }
+    free(g);
 }
 
 bool load_graph_from_file(Graph* g, const char* filename) {
+    if (!g || !filename) {
+        fprintf(stderr, "Error: Invalid graph or filename.\n");
+        return false;
+    }
+
     FILE* file = fopen(filename, "r");
     if (!file) {
         perror("Error opening input file");
         return false;
     }
 
-    // Read number of nodes and edges
     if (fscanf(file, "%d %d", &g->num_nodes, &g->num_edges) != 2) {
         fprintf(stderr, "Error: Failed to read nodes and edges count.\n");
         fclose(file);
@@ -49,7 +52,12 @@ bool load_graph_from_file(Graph* g, const char* filename) {
         return false;
     }
 
-    // Read all edges
+    if (g->num_edges < 0 || g->num_edges > g->num_nodes * g->num_nodes) {
+        fprintf(stderr, "Error: Invalid number of edges.\n");
+        fclose(file);
+        return false;
+    }
+
     for (int i = 0; i < g->num_edges; i++) {
         int u, v, w;
         if (fscanf(file, "%d %d %d", &u, &v, &w) != 3) {
@@ -64,7 +72,6 @@ bool load_graph_from_file(Graph* g, const char* filename) {
             return false;
         }
 
-        // Requirement: Negative weights are invalid input
         if (w < 0) {
             fprintf(stderr, "Error: Negative edge weight detected (%d). Invalid input.\n", w);
             fclose(file);
@@ -74,7 +81,6 @@ bool load_graph_from_file(Graph* g, const char* filename) {
         g->adj_matrix[u][v] = w;
     }
 
-    // Read the source and destination query for Dijkstra
     if (fscanf(file, "%d %d", &g->query_src, &g->query_dst) != 2) {
         fprintf(stderr, "Error: Failed to read Dijkstra query nodes.\n");
         fclose(file);
@@ -92,7 +98,11 @@ bool load_graph_from_file(Graph* g, const char* filename) {
     return true;
 }
 
-void run_dijkstra(const Graph* g) {
+bool get_dijkstra_path(const Graph* g, int path[], int* path_len, int* total_weight) {
+    if (!g || !path || !path_len || !total_weight) {
+        return false;
+    }
+
     int src = g->query_src;
     int dst = g->query_dst;
     int n = g->num_nodes;
@@ -113,7 +123,6 @@ void run_dijkstra(const Graph* g) {
         int min_dist = INT_MAX;
         int u = -1;
 
-        // Find the unvisited node with the smallest distance
         for (int i = 0; i < n; i++) {
             if (!visited[i] && dist[i] < min_dist) {
                 min_dist = dist[i];
@@ -121,41 +130,66 @@ void run_dijkstra(const Graph* g) {
             }
         }
 
-        // If remaining nodes are unreachable
-        if (u == -1) break;
+        if (u == -1) {
+            break;
+        }
 
         visited[u] = true;
 
-        // Update distance of adjacent nodes
+        if (u == dst) {
+            break;
+        }
+
         for (int v = 0; v < n; v++) {
-            if (g->adj_matrix[u][v] != -1 && !visited[v]) {
-                if (dist[u] != INT_MAX && dist[u] + g->adj_matrix[u][v] < dist[v]) {
-                    dist[v] = dist[u] + g->adj_matrix[u][v];
+            int weight = g->adj_matrix[u][v];
+            if (weight != -1 && !visited[v] && dist[u] != INT_MAX) {
+                if (dist[u] <= INT_MAX - weight && dist[u] + weight < dist[v]) {
+                    dist[v] = dist[u] + weight;
                     parent[v] = u;
                 }
             }
         }
     }
 
-    // Requirement output formatting
     if (dist[dst] == INT_MAX) {
-        printf("No path found\n");
-    } else {
-        // Reconstruct path using the parent array
-        int path[MAX_NODES];
-        int path_len = 0;
-        int curr = dst;
-
-        while (curr != -1) {
-            path[path_len++] = curr;
-            curr = parent[curr];
-        }
-
-        // Print path in correct start-to-end order
-        for (int i = path_len - 1; i >= 0; i--) {
-            printf("%d", path[i]);
-            if (i > 0) printf(" -> ");
-        }
-        printf("\n%d\n", dist[dst]);
+        *path_len = 0;
+        *total_weight = 0;
+        return false;
     }
+
+    int reversed[MAX_NODES];
+    int len = 0;
+    int curr = dst;
+
+    while (curr != -1 && len < MAX_NODES) {
+        reversed[len++] = curr;
+        curr = parent[curr];
+    }
+
+    for (int i = 0; i < len; i++) {
+        path[i] = reversed[len - 1 - i];
+    }
+
+    *path_len = len;
+    *total_weight = dist[dst];
+    return true;
+}
+
+void run_dijkstra(const Graph* g) {
+    int path[MAX_NODES];
+    int path_len = 0;
+    int total_weight = 0;
+
+    if (!get_dijkstra_path(g, path, &path_len, &total_weight)) {
+        printf("No path found\n");
+        return;
+    }
+
+    for (int i = 0; i < path_len; i++) {
+        printf("%d", path[i]);
+        if (i < path_len - 1) {
+            printf(" -> ");
+        }
+    }
+    printf("\n%d\n", total_weight);
 }
