@@ -1,0 +1,6 @@
+# ninja log v5
+12	167	8003607798934949	CMakeFiles/OS_Project.dir/graph.c.obj	a187175fdc24a472
+3	146	8003607798728955	CMakeFiles/OS_Project.dir/main.c.obj	2dc6eae6351ab253
+168	722	8003607804289443	OS_Project.exe	e5a9ed47c36b2a9
+2	323	8003625257254883	build.ninja	5416b1ae66269c1
+23	100	8003625259352878	CMakeFiles/OS_Project.dir/main.c.obj	2dc6eae6351ab253

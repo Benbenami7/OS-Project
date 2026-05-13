@@ -1,0 +1,3 @@
+C:/Users/benbe/OneDrive/שולחן העבודה/OS-Project/cmake-build-debug/CMakeFiles/OS_Project.dir
+C:/Users/benbe/OneDrive/שולחן העבודה/OS-Project/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/benbe/OneDrive/שולחן העבודה/OS-Project/cmake-build-debug/CMakeFiles/rebuild_cache.dir
