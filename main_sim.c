@@ -37,6 +37,8 @@ int main(int argc, char* argv[]) {
     run_gui_milestone4(g, travelers, traveler_count);
 #elif SIM_MILESTONE == 5
     run_gui_milestone5(g, travelers, traveler_count);
+#elif SIM_MILESTONE == 6
+    run_gui_milestone6(g, travelers, traveler_count);
 #else
     // Prints the same Dijkstra result in the terminal and then opens the GUI simulation.
     run_dijkstra(g);

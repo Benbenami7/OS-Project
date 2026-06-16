@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <semaphore.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -21,6 +22,7 @@
 #define JUMP_DURATION 0.30f
 #define NODE_WAIT_SECONDS 1.0f
 #define IPC_LINE_SIZE 128
+#define SEM_NAME_SIZE 64
 
 typedef enum {
     SIM_AT_NODE,
@@ -39,6 +41,8 @@ typedef struct {
     bool terminate_sent;
     bool reaped;
     bool finished_logged;
+    bool waiting;
+    int waiting_node;
     int path[MAX_NODES];
     int path_len;
     int total_weight;
@@ -278,6 +282,10 @@ static void build_node_positions(const Graph* g, Vector2 positions[],
 static Vector2 draw_position_for_traveler(const TravelerSim* traveler) {
     float angle = (float)traveler->id * 1.0471976f;
     float radius = 9.0f + (float)(traveler->id % 3) * 3.0f;
+    if (traveler->waiting) {
+        radius = NODE_RADIUS + 18.0f + (float)(traveler->id % 3) * 5.0f;
+    }
+
     return (Vector2){
         traveler->position.x + cosf(angle) * radius,
         traveler->position.y + sinf(angle) * radius
@@ -302,6 +310,8 @@ static void draw_traveler_status(const TravelerSim travelers[], int traveler_cou
 
         if (!t->has_path && t->pipe_fd < 0) {
             state_text = "no path";
+        } else if (t->waiting) {
+            state_text = "waiting";
         } else if (t->done) {
             state_text = "done";
         } else if (t->state == SIM_AT_NODE) {
@@ -331,6 +341,11 @@ static void draw_travelers(const TravelerSim travelers[], int traveler_count) {
         DrawCircleV(draw_pos, ENTITY_RADIUS + 3.0f, RAYWHITE);
         DrawCircleV(draw_pos, ENTITY_RADIUS, t->color);
         DrawCircleLines((int)draw_pos.x, (int)draw_pos.y, ENTITY_RADIUS, BLACK);
+
+        if (t->waiting) {
+            DrawCircleLines((int)draw_pos.x, (int)draw_pos.y, ENTITY_RADIUS + 7.0f, RED);
+            draw_centered_text("W", (int)draw_pos.x, (int)draw_pos.y - 24, 14, RED);
+        }
 
         char id_text[8];
         snprintf(id_text, sizeof(id_text), "%d", t->id);
@@ -794,6 +809,33 @@ static bool child_send_finished(int fd) {
     return write_all(fd, line, strlen(line));
 }
 
+static bool child_send_message(int fd, const char* message) {
+    char line[IPC_LINE_SIZE];
+    int len = snprintf(line, sizeof(line), "%s\n", message);
+    if (len < 0 || len >= (int)sizeof(line)) {
+        return false;
+    }
+    return write_all(fd, line, (size_t)len);
+}
+
+static bool child_send_node_message(int fd, const char* message, int node) {
+    char line[IPC_LINE_SIZE];
+    int len = snprintf(line, sizeof(line), "%s %d\n", message, node);
+    if (len < 0 || len >= (int)sizeof(line)) {
+        return false;
+    }
+    return write_all(fd, line, (size_t)len);
+}
+
+static bool child_send_left_node(int fd, int node, int next_node) {
+    char line[IPC_LINE_SIZE];
+    int len = snprintf(line, sizeof(line), "LEFT_NODE %d %d\n", node, next_node);
+    if (len < 0 || len >= (int)sizeof(line)) {
+        return false;
+    }
+    return write_all(fd, line, (size_t)len);
+}
+
 static void run_milestone5_child(const Graph* g, TravelerRequest request, int write_fd) {
     int path[MAX_NODES];
     int path_len = 0;
@@ -835,6 +877,156 @@ static void run_milestone5_child(const Graph* g, TravelerRequest request, int wr
     _exit(0);
 }
 
+static bool init_node_semaphores(const Graph* g, sem_t* node_sems[],
+                                 char sem_names[][SEM_NAME_SIZE]) {
+    for (int i = 0; i < g->num_nodes; i++) {
+        snprintf(sem_names[i], SEM_NAME_SIZE, "/osgraph_%ld_%d", (long)getpid(), i);
+        sem_unlink(sem_names[i]);
+
+        node_sems[i] = sem_open(sem_names[i], O_CREAT | O_EXCL, 0600, 1);
+        if (node_sems[i] == SEM_FAILED) {
+            perror("sem_open");
+
+            for (int j = 0; j < i; j++) {
+                sem_close(node_sems[j]);
+                sem_unlink(sem_names[j]);
+                node_sems[j] = SEM_FAILED;
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void cleanup_node_semaphores(const Graph* g, sem_t* node_sems[],
+                                    char sem_names[][SEM_NAME_SIZE]) {
+    for (int i = 0; i < g->num_nodes; i++) {
+        if (node_sems[i] != SEM_FAILED && node_sems[i] != NULL) {
+            sem_close(node_sems[i]);
+            sem_unlink(sem_names[i]);
+            node_sems[i] = SEM_FAILED;
+        }
+    }
+}
+
+static bool wait_for_node_lock(int write_fd, sem_t* node_sems[], int node) {
+    if (sem_trywait(node_sems[node]) == 0) {
+        return true;
+    }
+
+    if (errno != EAGAIN) {
+        while (sem_wait(node_sems[node]) == -1) {
+            if (errno != EINTR) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (!child_send_node_message(write_fd, "WAITING_FOR_NODE", node)) {
+        return false;
+    }
+
+    while (sem_wait(node_sems[node]) == -1) {
+        if (errno != EINTR) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void sleep_edge_steps(const Graph* g, int current, int next) {
+    int edge_weight = g->adj_matrix[current][next];
+    int jumps = edge_weight > 0 ? edge_weight : 1;
+
+    for (int step = 0; step < jumps; step++) {
+        sleep_seconds(JUMP_DURATION);
+    }
+}
+
+static void run_milestone6_child(const Graph* g, TravelerRequest request,
+                                 int write_fd, sem_t* node_sems[]) {
+    int path[MAX_NODES];
+    int path_len = 0;
+    int total_weight = 0;
+
+    if (!valid_node(g, request.source) || !valid_node(g, request.destination)) {
+        child_send_message(write_fd, "ERROR invalid_node");
+        child_send_finished(write_fd);
+        close(write_fd);
+        _exit(0);
+    }
+
+    if (!get_dijkstra_path_between(g, request.source, request.destination,
+                                   path, &path_len, &total_weight)) {
+        child_send_message(write_fd, "NO_PATH");
+        child_send_finished(write_fd);
+        close(write_fd);
+        _exit(0);
+    }
+    (void)total_weight;
+
+    if (path_len == 1) {
+        if (!wait_for_node_lock(write_fd, node_sems, path[0])) {
+            child_send_message(write_fd, "ERROR semaphore_wait");
+            child_send_finished(write_fd);
+            close(write_fd);
+            _exit(0);
+        }
+        child_send_node_message(write_fd, "DESTINATION", path[0]);
+        sem_post(node_sems[path[0]]);
+        child_send_finished(write_fd);
+        close(write_fd);
+        _exit(0);
+    }
+
+    for (int i = 0; i < path_len - 1; i++) {
+        int current = path[i];
+        int next = path[i + 1];
+
+        if (!wait_for_node_lock(write_fd, node_sems, current)) {
+            child_send_message(write_fd, "ERROR semaphore_wait");
+            child_send_finished(write_fd);
+            close(write_fd);
+            _exit(0);
+        }
+
+        if (!child_send_node_message(write_fd, "ENTERED_NODE", current)) {
+            sem_post(node_sems[current]);
+            close(write_fd);
+            _exit(0);
+        }
+
+        if (i > 0) {
+            sleep_seconds(NODE_WAIT_SECONDS);
+        }
+
+        if (!child_send_left_node(write_fd, current, next)) {
+            sem_post(node_sems[current]);
+            close(write_fd);
+            _exit(0);
+        }
+
+        sem_post(node_sems[current]);
+
+        sleep_edge_steps(g, current, next);
+    }
+
+    if (!wait_for_node_lock(write_fd, node_sems, path[path_len - 1])) {
+        child_send_message(write_fd, "ERROR semaphore_wait");
+        child_send_finished(write_fd);
+        close(write_fd);
+        _exit(0);
+    }
+    child_send_node_message(write_fd, "DESTINATION", path[path_len - 1]);
+    sem_post(node_sems[path[path_len - 1]]);
+    child_send_finished(write_fd);
+    close(write_fd);
+    _exit(0);
+}
+
 static void init_milestone5_traveler(const Graph* g, TravelerSim* traveler,
                                      const TravelerRequest* request,
                                      const Vector2 positions[], int id) {
@@ -846,6 +1038,7 @@ static void init_milestone5_traveler(const Graph* g, TravelerSim* traveler,
     traveler->color = traveler_color(id);
     traveler->state = SIM_AT_NODE;
     traveler->next_node = -1;
+    traveler->waiting_node = -1;
     traveler->pipe_open = false;
     traveler->has_path = valid_node(g, request->source);
 
@@ -925,6 +1118,67 @@ static void fork_milestone5_children(const Graph* g, TravelerSim travelers[],
     }
 }
 
+static void fork_milestone6_children(const Graph* g, TravelerSim travelers[],
+                                     int traveler_count, sem_t* node_sems[]) {
+    int pipes[MAX_TRAVELERS][2];
+
+    for (int i = 0; i < traveler_count; i++) {
+        pipes[i][0] = -1;
+        pipes[i][1] = -1;
+        if (pipe(pipes[i]) == -1) {
+            perror("pipe");
+            travelers[i].done = true;
+        }
+    }
+
+    for (int i = 0; i < traveler_count; i++) {
+        if (pipes[i][0] == -1 || pipes[i][1] == -1) {
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("fork");
+            close(pipes[i][0]);
+            close(pipes[i][1]);
+            pipes[i][0] = -1;
+            pipes[i][1] = -1;
+            travelers[i].done = true;
+            continue;
+        }
+
+        if (pid == 0) {
+            for (int j = 0; j < traveler_count; j++) {
+                if (pipes[j][0] != -1) {
+                    close(pipes[j][0]);
+                }
+                if (j != i && pipes[j][1] != -1) {
+                    close(pipes[j][1]);
+                }
+            }
+            run_milestone6_child(g, travelers[i].request, pipes[i][1], node_sems);
+        }
+
+        travelers[i].pid = pid;
+    }
+
+    for (int i = 0; i < traveler_count; i++) {
+        if (pipes[i][1] != -1) {
+            close(pipes[i][1]);
+        }
+
+        if (pipes[i][0] != -1 && travelers[i].pid > 0) {
+            travelers[i].pipe_fd = pipes[i][0];
+            travelers[i].pipe_open = true;
+            if (!set_nonblocking(travelers[i].pipe_fd)) {
+                perror("fcntl");
+            }
+        } else if (pipes[i][0] != -1) {
+            close(pipes[i][0]);
+        }
+    }
+}
+
 static void handle_ipc_line(TravelerSim* traveler, const Vector2 positions[],
                             const char* line) {
     int node = -1;
@@ -950,6 +1204,78 @@ static void handle_ipc_line(TravelerSim* traveler, const Vector2 positions[],
             printf("[PID=%d] arrived at node %d | DESTINATION\n",
                    (int)traveler->pid, node);
         }
+        fflush(stdout);
+    } else if (sscanf(line, "WAITING_FOR_NODE %d", &node) == 1) {
+        traveler->has_path = true;
+        traveler->waiting = true;
+        traveler->waiting_node = node;
+        traveler->next_node = -1;
+        traveler->state = SIM_AT_NODE;
+        traveler->state_timer = 0.0f;
+        traveler->jump_index = 0;
+        if (node >= 0 && node < MAX_NODES) {
+            traveler->position = positions[node];
+        }
+        printf("[PID=%d] waiting for node %d\n", (int)traveler->pid, node);
+        fflush(stdout);
+    } else if (sscanf(line, "ENTERED_NODE %d", &node) == 1) {
+        traveler->has_path = true;
+        traveler->waiting = false;
+        traveler->waiting_node = -1;
+        traveler->current_node = node;
+        traveler->next_node = -1;
+        traveler->state = SIM_AT_NODE;
+        traveler->state_timer = 0.0f;
+        traveler->jump_index = 0;
+        if (node >= 0 && node < MAX_NODES) {
+            traveler->position = positions[node];
+        }
+        printf("[PID=%d] entered node %d\n", (int)traveler->pid, node);
+        fflush(stdout);
+    } else if (sscanf(line, "LEFT_NODE %d %d", &node, &next_node) == 2) {
+        traveler->has_path = true;
+        traveler->waiting = false;
+        traveler->waiting_node = -1;
+        traveler->current_node = node;
+        traveler->next_node = next_node;
+        traveler->state = SIM_MOVING;
+        traveler->state_timer = 0.0f;
+        traveler->jump_index = 0;
+        if (node >= 0 && node < MAX_NODES) {
+            traveler->position = positions[node];
+        }
+        printf("[PID=%d] left node %d | next node: %d\n",
+               (int)traveler->pid, node, next_node);
+        fflush(stdout);
+    } else if (sscanf(line, "DESTINATION %d", &node) == 1) {
+        traveler->has_path = true;
+        traveler->waiting = false;
+        traveler->waiting_node = -1;
+        traveler->current_node = node;
+        traveler->next_node = -1;
+        traveler->done = true;
+        traveler->state = SIM_FINISHED;
+        if (node >= 0 && node < MAX_NODES) {
+            traveler->position = positions[node];
+        }
+        printf("[PID=%d] arrived at node %d | DESTINATION\n",
+               (int)traveler->pid, node);
+        fflush(stdout);
+    } else if (strcmp(line, "NO_PATH") == 0) {
+        traveler->has_path = false;
+        traveler->waiting = false;
+        traveler->done = true;
+        traveler->state = SIM_FINISHED;
+        printf("[PID=%d] NO_PATH from %d to %d\n",
+               (int)traveler->pid, traveler->request.source,
+               traveler->request.destination);
+        fflush(stdout);
+    } else if (strncmp(line, "ERROR", 5) == 0) {
+        traveler->has_path = false;
+        traveler->waiting = false;
+        traveler->done = true;
+        traveler->state = SIM_FINISHED;
+        printf("[PID=%d] %s\n", (int)traveler->pid, line);
         fflush(stdout);
     } else if (strcmp(line, "FINISHED") == 0) {
         mark_child_finished(traveler);
@@ -1066,4 +1392,66 @@ void run_gui_milestone5(Graph* g, const TravelerRequest requests[], int traveler
 
     CloseWindow();
     cleanup_children(travelers, traveler_count);
+}
+
+void run_gui_milestone6(Graph* g, const TravelerRequest requests[], int traveler_count) {
+    const int screen_width = 950;
+    const int screen_height = 780;
+
+    Vector2 positions[MAX_NODES];
+    build_node_positions(g, positions, screen_width, screen_height);
+
+    sem_t* node_sems[MAX_NODES];
+    char sem_names[MAX_NODES][SEM_NAME_SIZE];
+    for (int i = 0; i < MAX_NODES; i++) {
+        node_sems[i] = SEM_FAILED;
+        sem_names[i][0] = '\0';
+    }
+
+    if (!init_node_semaphores(g, node_sems, sem_names)) {
+        fprintf(stderr, "Error: Failed to initialize node semaphores.\n");
+        return;
+    }
+
+    TravelerSim travelers[MAX_TRAVELERS];
+    for (int i = 0; i < traveler_count; i++) {
+        init_milestone5_traveler(g, &travelers[i], &requests[i], positions, i);
+    }
+
+    fork_milestone6_children(g, travelers, traveler_count, node_sems);
+
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    InitWindow(screen_width, screen_height, "OS Project - Milestone 6 Synchronized Nodes");
+    SetTargetFPS(60);
+
+    while (!WindowShouldClose()) {
+        float dt = GetFrameTime();
+
+        read_ipc_messages(travelers, traveler_count, positions);
+
+        for (int i = 0; i < traveler_count; i++) {
+            advance_ipc_traveler(g, &travelers[i], positions, dt);
+            if (travelers[i].done) {
+                reap_child_nonblocking(&travelers[i]);
+            }
+        }
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        draw_traveler_status(travelers, traveler_count,
+                             "Milestone 6: Synchronized Node Access",
+                             "Intermediate-node waits are protected by one POSIX semaphore per node.");
+        draw_graph(g, positions);
+        draw_travelers(travelers, traveler_count);
+
+        if (all_travelers_done(travelers, traveler_count)) {
+            draw_finished_banner(screen_width, screen_height, "All travelers finished");
+        }
+
+        EndDrawing();
+    }
+
+    CloseWindow();
+    cleanup_children(travelers, traveler_count);
+    cleanup_node_semaphores(g, node_sems, sem_names);
 }

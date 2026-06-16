@@ -7,5 +7,6 @@
 void run_gui(Graph* g);
 void run_gui_milestone4(Graph* g, const TravelerRequest travelers[], int traveler_count);
 void run_gui_milestone5(Graph* g, const TravelerRequest travelers[], int traveler_count);
+void run_gui_milestone6(Graph* g, const TravelerRequest travelers[], int traveler_count);
 
 #endif // GUI_H
