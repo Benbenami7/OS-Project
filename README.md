@@ -1,4 +1,7 @@
 # OS Project - Graph Traffic Simulation
+Students -
+Ben Ben Ami
+Eyal Zamero
 
 This project implements a directed weighted graph, Dijkstra shortest path,
 raylib graph visualization, single-traveler animation, and multi-traveler
