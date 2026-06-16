@@ -8,15 +8,23 @@ SIM_TARGET = sim
 DIJKSTRA_OBJS = main_dijkstra.o graph.o
 SIM_OBJS = main_sim.o graph.o gui.o
 
-.PHONY: all milestone1 milestone2 milestone3 clean
+.PHONY: all milestone1 milestone2 milestone3 milestone4 milestone5 clean
 
 all: milestone3
 
 milestone1: $(DIJKSTRA_TARGET)
 
-milestone2: $(SIM_TARGET)
+milestone2:
+	$(CC) $(CFLAGS) -DSIM_MILESTONE=3 -o $(SIM_TARGET) main_sim.c graph.c gui.c $(RAYLIB_FLAGS)
 
-milestone3: $(SIM_TARGET)
+milestone3:
+	$(CC) $(CFLAGS) -DSIM_MILESTONE=3 -o $(SIM_TARGET) main_sim.c graph.c gui.c $(RAYLIB_FLAGS)
+
+milestone4:
+	$(CC) $(CFLAGS) -DSIM_MILESTONE=4 -o $(SIM_TARGET) main_sim.c graph.c gui.c $(RAYLIB_FLAGS)
+
+milestone5:
+	$(CC) $(CFLAGS) -DSIM_MILESTONE=5 -o $(SIM_TARGET) main_sim.c graph.c gui.c $(RAYLIB_FLAGS)
 
 $(DIJKSTRA_TARGET): $(DIJKSTRA_OBJS)
 	$(CC) $(CFLAGS) -o $(DIJKSTRA_TARGET) $(DIJKSTRA_OBJS)

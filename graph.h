@@ -5,6 +5,7 @@
 
 // Requirement: assume at most 15 nodes
 #define MAX_NODES 15
+#define MAX_TRAVELERS 64
 
 // -1 means no edge in the adjacency matrix
 typedef struct {
@@ -15,10 +16,16 @@ typedef struct {
     int query_dst;
 } Graph;
 
+typedef struct {
+    int source;
+    int destination;
+} TravelerRequest;
+
 Graph* create_graph(void);
 void free_graph(Graph* g);
 
 bool load_graph_from_file(Graph* g, const char* filename);
+bool load_graph_and_travelers(const char* filename, Graph* g, TravelerRequest** travelers, int* traveler_count);
 
 // Milestone 1: prints the shortest path and total weight exactly as required.
 void run_dijkstra(const Graph* g);
@@ -26,5 +33,7 @@ void run_dijkstra(const Graph* g);
 // Milestone 3: calculates the shortest path and returns it for the GUI animation.
 // Returns false when no path exists.
 bool get_dijkstra_path(const Graph* g, int path[], int* path_len, int* total_weight);
+bool get_dijkstra_path_between(const Graph* g, int src, int dst,
+                               int path[], int* path_len, int* total_weight);
 
 #endif // GRAPH_H

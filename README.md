@@ -1,8 +1,19 @@
 # OS Project - Graph Traffic Simulation
 
-This project implements a directed weighted graph, Dijkstra shortest path, graph visualization with Raylib, and a moving entity animation along the shortest path.
+This project implements a directed weighted graph, Dijkstra shortest path,
+raylib graph visualization, single-traveler animation, and multi-traveler
+process simulations.
 
-## Input file format
+## Requirements
+
+- POSIX C environment with `fork`, `pipe`, `kill`, and `waitpid`
+- `gcc`
+- `raylib`
+- `make`
+
+## Input Formats
+
+Milestones 1-3 still accept the original single-query format:
 
 ```txt
 N M
@@ -12,77 +23,105 @@ src dst weight
 query_src query_dst
 ```
 
-Example:
+Milestones 4-5 use the extended traveler format. Blank lines and lines whose
+first non-space character is `#` are ignored:
 
 ```txt
-6 8
-0 1 4
-0 2 2
-1 3 5
-2 1 1
-2 3 8
-3 4 2
-4 5 3
-2 5 10
-0 5
+# graph definition
+N M
+src dst weight
+src dst weight
+...
+# travelers
+K
+source destination
+source destination
+...
 ```
 
-## Milestone 1
+Example file: `milestone45_example.txt`
 
-Build:
+## Build and Run
+
+Milestone 1:
 
 ```bash
 make milestone1
-```
-
-Run:
-
-```bash
 ./dijkstra graph.txt
 ```
 
-Description: loads the graph from a text file, runs Dijkstra from the source to the destination written in the file, and prints the shortest path and total weight. If there is no path, it prints `No path found`.
-
-## Milestone 2
-
-Build:
-
-```bash
-make milestone2
-```
-
-Run:
-
-```bash
-./sim graph.txt
-```
-
-Description: displays the graph in a Raylib window. Nodes are displayed as circles, edges are displayed as directed arrows, and edge weights are shown next to the arrows.
-
-## Milestone 3
-
-Build:
+Milestone 2/3:
 
 ```bash
 make milestone3
-```
-
-Run:
-
-```bash
 ./sim graph.txt
 ```
 
-Description: calculates the shortest path using Dijkstra and animates a moving entity along that path. The Play/Stop button starts and pauses the animation. Each edge with weight `W` is divided into `W` equal jumps, where each jump takes 300 milliseconds. The entity waits one second on every intermediate node, not including the source and destination. When the entity reaches the destination, a message is displayed on the screen.
+Milestone 4:
 
-## Clean
+```bash
+make milestone4
+./sim milestone45_example.txt
+```
+
+Milestone 5:
+
+```bash
+make milestone5
+./sim milestone45_example.txt
+```
+
+Clean:
 
 ```bash
 make clean
 ```
 
-## Notes
+## Milestone 4
 
-- Maximum number of nodes: 15.
-- Negative numbers are treated as invalid input.
-- The project uses only standard C libraries and Raylib.
+The parent reads the graph and traveler list, computes a Dijkstra path for every
+traveler before calling `fork`, then creates one child per traveler. Each child
+prints:
+
+```txt
+[PID] started
+```
+
+After printing, the child sleeps in `pause()` until the parent terminates it.
+The parent owns the raylib GUI and animates all travelers at the same time. Each
+traveler uses a distinct color. When a traveler reaches its destination, the
+parent sends `SIGTERM` to that child and reaps it with `waitpid`.
+
+## Milestone 5
+
+Children are autonomous. The parent gives each child only the graph/traveler
+data inherited through `fork`; it does not pass precomputed routes. Each child
+computes its own Dijkstra path, simulates the route timing, and sends progress
+messages whenever it arrives at a node.
+
+The parent owns all terminal logging and raylib drawing. It reads child messages
+without blocking the GUI loop and logs arrivals as:
+
+```txt
+[PID=1021] arrived at node 0 | next node: 2
+[PID=1021] arrived at node 4 | DESTINATION
+[PID=1021] finished
+```
+
+## IPC Choice
+
+Milestone 5 uses one POSIX pipe per child. Pipes are simple, local to the
+parent-child relationship created by `fork`, and fit the one-way progress stream
+needed here. The parent closes every unused write end, marks read ends
+non-blocking with `fcntl(O_NONBLOCK)`, polls them during each GUI frame, and
+uses `waitpid` to prevent zombies.
+
+## Notes and Limits
+
+- Maximum nodes: 15.
+- Maximum travelers: 64.
+- Edge weights must be non-negative.
+- Edge weight `W` is animated as `W` equal steps at 300 ms per step.
+- Travelers wait 1 second only at intermediate nodes.
+- Invalid traveler nodes, no-path travelers, and `source == destination` cases
+  are handled without crashing.
