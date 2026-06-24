@@ -7,6 +7,9 @@
 
 #define INPUT_LINE_SIZE 256
 
+// =================================================================
+// MILESTONE 1: GRAPH MEMORY MANAGEMENT
+// =================================================================
 Graph* create_graph(void) {
     Graph* g = (Graph*)malloc(sizeof(Graph));
     if (!g) {
@@ -32,6 +35,10 @@ void free_graph(Graph* g) {
     free(g);
 }
 
+// =================================================================
+// MILESTONE 1/4/5: FILE PARSING
+// Reads the graph.txt and travelers data line by line
+// =================================================================
 static bool read_data_line(FILE* file, char line[], size_t line_size) {
     while (fgets(line, (int)line_size, file)) {
         char* p = line;
@@ -212,6 +219,11 @@ bool load_graph_from_file(Graph* g, const char* filename) {
     return true;
 }
 
+// =================================================================
+// MILESTONE 1: CORE DIJKSTRA ALGORITHM (EXAM HOTSPOT)
+// If you need to change how paths are calculated, weights are added,
+// or nodes are filtered, do it inside this function!
+// =================================================================
 bool get_dijkstra_path_between(const Graph* g, int src, int dst,
                                int path[], int* path_len, int* total_weight) {
     if (!g || !path || !path_len || !total_weight) {
@@ -242,6 +254,7 @@ bool get_dijkstra_path_between(const Graph* g, int src, int dst,
         int min_dist = INT_MAX;
         int u = -1;
 
+        // Find the unvisited node with the smallest distance
         for (int i = 0; i < n; i++) {
             if (!visited[i] && dist[i] < min_dist) {
                 min_dist = dist[i];
@@ -259,6 +272,7 @@ bool get_dijkstra_path_between(const Graph* g, int src, int dst,
             break;
         }
 
+        // Update distances of adjacent vertices
         for (int v = 0; v < n; v++) {
             int weight = g->adj_matrix[u][v];
             if (weight != -1 && !visited[v] && dist[u] != INT_MAX) {
@@ -276,6 +290,7 @@ bool get_dijkstra_path_between(const Graph* g, int src, int dst,
         return false;
     }
 
+    // Reconstruct the path backwards
     int reversed[MAX_NODES];
     int len = 0;
     int curr = dst;
@@ -285,6 +300,7 @@ bool get_dijkstra_path_between(const Graph* g, int src, int dst,
         curr = parent[curr];
     }
 
+    // Reverse the array to get the correct path order
     for (int i = 0; i < len; i++) {
         path[i] = reversed[len - 1 - i];
     }
