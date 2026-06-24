@@ -19,8 +19,8 @@
 #define NODE_RADIUS 32.0f
 #define NODE_FONT_SIZE 20
 #define ENTITY_RADIUS 13.0f
-#define JUMP_DURATION 0.30f
-#define NODE_WAIT_SECONDS 1.0f
+#define JUMP_DURATION 0.80f
+#define NODE_WAIT_SECONDS 2.5f
 #define IPC_LINE_SIZE 128
 #define SEM_NAME_SIZE 64
 
@@ -1237,4 +1237,209 @@ void run_gui_milestone6(Graph* g, const TravelerRequest requests[], int traveler
     CloseWindow();
     cleanup_children(travelers, traveler_count);
     cleanup_node_semaphores(g, node_sems, sem_names);
+}
+// =================================================================
+// MILESTONE 7: PARENT-MANAGED SCHEDULING (FCFS / SJF)
+// =================================================================
+
+static void run_milestone7_child(const Graph* g, TravelerRequest request, int write_fd, sem_t* my_sem) {
+    int path[MAX_NODES];
+    int path_len = 0;
+    int total_weight = 0;
+
+    if (!valid_node(g, request.source) || !valid_node(g, request.destination)) {
+        child_send_message(write_fd, "ERROR invalid_node");
+        child_send_finished(write_fd); close(write_fd); _exit(0);
+    }
+
+    if (!get_dijkstra_path_between(g, request.source, request.destination, path, &path_len, &total_weight)) {
+        child_send_message(write_fd, "NO_PATH");
+        child_send_finished(write_fd); close(write_fd); _exit(0);
+    }
+    (void)total_weight;
+
+    if (path_len == 1) {
+        child_send_node_message(write_fd, "WAITING_FOR_NODE", path[0]);
+        sem_wait(my_sem); // Wait for Parent's Scheduling decision!
+        child_send_node_message(write_fd, "DESTINATION", path[0]);
+        child_send_finished(write_fd); close(write_fd); _exit(0);
+    }
+
+    for (int i = 0; i < path_len - 1; i++) {
+        int current = path[i];
+        int next = path[i + 1];
+
+        // EXAM HOTSPOT: Child asks parent for permission and goes to sleep
+        child_send_node_message(write_fd, "WAITING_FOR_NODE", current);
+        sem_wait(my_sem); 
+
+        // Parent woke us up! We are in the critical section.
+        child_send_node_message(write_fd, "ENTERED_NODE", current);
+        if (i > 0) sleep_seconds(NODE_WAIT_SECONDS);
+
+        // Leaving critical section
+        child_send_left_node(write_fd, current, next);
+        sleep_edge_steps(g, current, next);
+    }
+
+    child_send_node_message(write_fd, "WAITING_FOR_NODE", path[path_len - 1]);
+    sem_wait(my_sem);
+    child_send_node_message(write_fd, "DESTINATION", path[path_len - 1]);
+    child_send_finished(write_fd); close(write_fd); _exit(0);
+}
+
+static void fork_milestone7_children(const Graph* g, TravelerSim travelers[], int traveler_count, sem_t* trav_sems[]) {
+    int pipes[MAX_TRAVELERS][2];
+    for (int i = 0; i < traveler_count; i++) {
+        pipes[i][0] = -1; pipes[i][1] = -1;
+        if (pipe(pipes[i]) == -1) { perror("pipe"); travelers[i].done = true; }
+    }
+
+    for (int i = 0; i < traveler_count; i++) {
+        if (pipes[i][0] == -1 || pipes[i][1] == -1) continue;
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("fork");
+            close(pipes[i][0]); close(pipes[i][1]);
+            pipes[i][0] = -1; pipes[i][1] = -1;
+            travelers[i].done = true;
+            continue;
+        }
+
+        if (pid == 0) {
+            for (int j = 0; j < traveler_count; j++) {
+                if (pipes[j][0] != -1) close(pipes[j][0]);
+                if (j != i && pipes[j][1] != -1) close(pipes[j][1]);
+            }
+            run_milestone7_child(g, travelers[i].request, pipes[i][1], trav_sems[i]);
+        }
+        travelers[i].pid = pid;
+    }
+
+    for (int i = 0; i < traveler_count; i++) {
+        if (pipes[i][1] != -1) close(pipes[i][1]);
+        if (pipes[i][0] != -1 && travelers[i].pid > 0) {
+            travelers[i].pipe_fd = pipes[i][0];
+            travelers[i].pipe_open = true;
+            if (!set_nonblocking(travelers[i].pipe_fd)) perror("fcntl");
+        } else if (pipes[i][0] != -1) close(pipes[i][0]);
+    }
+}
+
+void run_gui_milestone7(Graph* g, const TravelerRequest requests[], int traveler_count, const char* algo) {
+    const int screen_width = 950;
+    const int screen_height = 780;
+    Vector2 positions[MAX_NODES];
+    build_node_positions(g, positions, screen_width, screen_height);
+
+    bool is_sjf = (strcmp(algo, "sjf") == 0);
+
+    // Create a private semaphore for EACH traveler (Starts locked - 0)
+    sem_t* trav_sems[MAX_TRAVELERS];
+    char sem_names[MAX_TRAVELERS][SEM_NAME_SIZE];
+    for (int i = 0; i < traveler_count; i++) {
+        snprintf(sem_names[i], SEM_NAME_SIZE, "/osgraph_trav_%ld_%d", (long)getpid(), i);
+        sem_unlink(sem_names[i]);
+        trav_sems[i] = sem_open(sem_names[i], O_CREAT | O_EXCL, 0600, 0); 
+    }
+
+    TravelerSim travelers[MAX_TRAVELERS];
+    for (int i = 0; i < traveler_count; i++) {
+        // We use milestone4 init here because the parent needs to calculate Dijkstra 
+        // in advance so it knows the t->total_weight for SJF calculations!
+        init_milestone4_traveler(g, &travelers[i], &requests[i], positions, i);
+        travelers[i].state = SIM_AT_NODE; 
+        travelers[i].waiting_node = -1;
+        travelers[i].waiting = false;
+        if (!valid_node(g, requests[i].source)) travelers[i].has_path = false;
+    }
+
+    fork_milestone7_children(g, travelers, traveler_count, trav_sems);
+
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    char title[128];
+    snprintf(title, sizeof(title), "OS Project - Milestone 7 Scheduler (%s)", is_sjf ? "SJF" : "FCFS");
+    InitWindow(screen_width, screen_height, title);
+    SetTargetFPS(60);
+
+    int node_occupant[MAX_NODES];
+    for (int i = 0; i < MAX_NODES; i++) node_occupant[i] = -1;
+    
+    int request_tickets[MAX_TRAVELERS] = {0};
+    int global_ticket = 1;
+
+    while (!WindowShouldClose()) {
+        float dt = GetFrameTime();
+        read_ipc_messages(travelers, traveler_count, positions);
+
+        // 1. CLEAR OCCUPANTS: If a traveler left the node, mark it as free
+        for (int i = 0; i < traveler_count; i++) {
+            TravelerSim* t = &travelers[i];
+            for (int n = 0; n < MAX_NODES; n++) {
+                if (node_occupant[n] == t->id) {
+                    if (t->done || t->state == SIM_MOVING || (t->waiting && t->waiting_node != n)) {
+                        node_occupant[n] = -1;
+                    }
+                }
+            }
+        }
+
+        // 2. SCHEDULER: Assign free nodes to waiting travelers based on FCFS or SJF
+        for (int n = 0; n < MAX_NODES; n++) {
+            if (node_occupant[n] == -1) {
+                int best_candidate = -1;
+                int best_score = -1;
+
+                for (int i = 0; i < traveler_count; i++) {
+                    TravelerSim* t = &travelers[i];
+                    if (t->waiting && t->waiting_node == n && !t->done) {
+                        // Assign a timestamp ticket for FCFS
+                        if (request_tickets[i] == 0) request_tickets[i] = global_ticket++;
+
+                        // EXAM HOTSPOT: Here is the scheduling logic!
+                        int score = is_sjf ? t->total_weight : request_tickets[i];
+                        
+                        if (best_candidate == -1 || score < best_score) {
+                            best_candidate = i;
+                            best_score = score;
+                        }
+                    }
+                }
+
+                if (best_candidate != -1) {
+                    node_occupant[n] = travelers[best_candidate].id;
+                    request_tickets[best_candidate] = 0; // Reset ticket for next wait
+                    
+                    // WAKE UP THE SELECTED CHILD!
+                    sem_post(trav_sems[best_candidate]);
+                }
+            }
+        }
+
+        for (int i = 0; i < traveler_count; i++) {
+            advance_ipc_traveler(g, &travelers[i], positions, dt);
+            if (travelers[i].done) reap_child_nonblocking(&travelers[i]);
+        }
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        draw_traveler_status(travelers, traveler_count, "Milestone 7: Scheduling Algorithm", 
+            is_sjf ? "SJF (Shortest Job First) Active" : "FCFS (First Come First Serve) Active");
+        draw_graph(g, positions);
+        draw_travelers(travelers, traveler_count);
+
+        if (all_travelers_done(travelers, traveler_count)) {
+            draw_finished_banner(screen_width, screen_height, "All travelers finished");
+        }
+        EndDrawing();
+    }
+    
+    CloseWindow();
+    cleanup_children(travelers, traveler_count);
+    for (int i = 0; i < traveler_count; i++) {
+        if (trav_sems[i] != SEM_FAILED) {
+            sem_close(trav_sems[i]);
+            sem_unlink(sem_names[i]);
+        }
+    }
 }
