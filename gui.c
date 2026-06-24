@@ -19,8 +19,8 @@
 #define NODE_RADIUS 32.0f
 #define NODE_FONT_SIZE 20
 #define ENTITY_RADIUS 13.0f
-#define JUMP_DURATION 0.30f
-#define NODE_WAIT_SECONDS 1.0f
+#define JUMP_DURATION 0.80f
+#define NODE_WAIT_SECONDS 2.5f
 #define IPC_LINE_SIZE 128
 #define SEM_NAME_SIZE 64
 
