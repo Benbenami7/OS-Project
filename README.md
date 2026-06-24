@@ -7,7 +7,7 @@ This project implements a directed weighted graph, Dijkstra shortest path,
 raylib graph visualization, single-traveler animation, and multi-traveler
 process simulations.
 
-GitHub tag for this milestone: `6milestone`
+GitHub tag for this milestone: `final`
 
 ## Requirements
 
@@ -28,7 +28,7 @@ src dst weight
 query_src query_dst
 ```
 
-Milestones 4-6 use the extended traveler format. Blank lines and lines whose
+Milestones 4-7 use the extended traveler format. Blank lines and lines whose
 first non-space character is `#` are ignored:
 
 ```txt
@@ -46,7 +46,7 @@ source destination
 
 Example file: `milestone45_example.txt`
 
-Milestone 6 contention example: `examples/milestone6_test.txt`
+Milestone 6 and 7 contention example: `graph_schd.txt`
 
 ## Build and Run
 
@@ -83,6 +83,14 @@ Milestone 6:
 ```bash
 make milestone6
 ./sim examples/milestone6_test.txt
+```
+
+Milestone 7 (Final - Scheduling Algorithms):
+
+```bash
+make milestone7
+./sim-schd fcfs graph_schd.txt
+./sim-schd sjf graph_schd.txt
 ```
 
 Clean:
@@ -142,15 +150,21 @@ The parent displays waiting travelers with a red `W` marker, keeps the GUI
 responsive by reading pipes in non-blocking mode, waits for all children, and
 closes/unlinks all named semaphores during cleanup.
 
+## Milestone 7 (Scheduling)
+
+Replaces the random OS-level semaphore acquisition with a Parent-Managed Scheduling system. Instead of fighting over a single semaphore per node, **each child gets its own private POSIX named semaphore**. 
+
+When a child reaches a busy node, it notifies the parent and goes to sleep on its private semaphore. The parent maintains a queue of waiting travelers for each node. When a node becomes free, the parent decides which child to wake up (using `sem_post` on that specific child's semaphore) based on the chosen algorithm provided via the command line (`fcfs` or `sjf`).
+
 ## IPC Choice
 
-Milestones 5 and 6 use one POSIX pipe per child. Pipes are simple, local to the
+Milestones 5, 6, and 7 use one POSIX pipe per child. Pipes are simple, local to the
 parent-child relationship created by `fork`, and fit the one-way progress stream
 needed here. The parent closes every unused write end, marks read ends
 non-blocking with `fcntl(O_NONBLOCK)`, polls them during each GUI frame, and
 uses `waitpid` to prevent zombies.
 
-Milestone 6 IPC messages include:
+Milestone 6/7 IPC messages include:
 
 ```txt
 WAITING_FOR_NODE <node>
@@ -164,8 +178,8 @@ FINISHED
 
 ## Synchronization Choice
 
-Milestone 6 uses one POSIX named semaphore per graph node. Named semaphores were
-chosen because they are POSIX, require no extra libraries beyond the normal
+Milestone 6 uses one POSIX named semaphore per graph node, while Milestone 7 uses one private POSIX named semaphore per traveler. Named semaphores were
+chosen because they are POSIX compliant, require no extra libraries beyond the normal
 POSIX toolchain flags, are inherited cleanly across `fork`, and can be
 explicitly closed and unlinked by the parent at exit.
 
@@ -174,7 +188,14 @@ explicitly closed and unlinked by the parent at exit.
 - Maximum nodes: 15.
 - Maximum travelers: 64.
 - Edge weights must be non-negative.
-- Edge weight `W` is animated as `W` equal steps at 300 ms per step.
+- Edge weight `W` is animated as `W` equal steps at 300 ms per step (adjusted for visual clarity in demonstrations).
 - Travelers wait 1 second only at intermediate nodes.
 - Invalid traveler nodes, no-path travelers, and `source == destination` cases
   are handled without crashing.
+
+## Scheduling Comparison (FCFS vs. SJF)
+
+Implementing the scheduler allowed us to observe the direct impact of scheduling algorithms on wait times during node contention:
+- **FCFS (First Come First Serve):** Travelers are granted access strictly based on their arrival time. While perfectly fair, this can cause a "convoy effect." If a traveler with a very long remaining route holds the node, quicker travelers must wait a significant amount of time, increasing the overall average wait time.
+- **SJF (Shortest Job First):** Priority is given to the traveler with the shortest total Dijkstra path weight. This highly optimizes throughput and reduces the average wait time, as quick travelers clear the intersection rapidly. However, it completely compromises fairness—a traveler with a long route might suffer from starvation if shorter jobs keep arriving at the node.
+`
