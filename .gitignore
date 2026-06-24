@@ -1,0 +1,11 @@
+# Ignore compiled binaries
+sim
+sim-schd
+*.o
+
+# Ignore temporary/backup files
+*.log
+*.txt~
+.idea/
+cmake-build-debug/
+
