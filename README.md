@@ -199,3 +199,43 @@ Implementing the scheduler allowed us to observe the direct impact of scheduling
 - **FCFS (First Come First Serve):** Travelers are granted access strictly based on their arrival time. While perfectly fair, this can cause a "convoy effect." If a traveler with a very long remaining route holds the node, quicker travelers must wait a significant amount of time, increasing the overall average wait time.
 - **SJF (Shortest Job First):** Priority is given to the traveler with the shortest total Dijkstra path weight. This highly optimizes throughput and reduces the average wait time, as quick travelers clear the intersection rapidly. However, it completely compromises fairness—a traveler with a long route might suffer from starvation if shorter jobs keep arriving at the node.
 `
+
+### Exam Workflow Sequence
+
+**1. Download from Git to VMware**
+git clone <your_repository_link>
+cd OS-Project
+git checkout -b <branch_name>
+
+**2. Install Graphics Library (Raylib)**
+sudo apt update
+sudo apt install libraylib-dev
+
+**3. Compile and Run**
+make clean
+make milestone7
+./sim-schd <filename>
+
+**4. Upload back to Git**
+git add .
+git commit -m "Final exam submission"
+git push origin <branch_name>
+
+### 📝 Commit Message Format (Exam Requirement)
+
+When making your final commit, the short description (commit message) **must** indicate which stages of the task you successfully completed according to the exam grading rubric:
+
+* **Stage 1:** Found the correct location in the code (The Hotspot).
+* **Stage 2:** Wrote logical code to solve the problem.
+* **Stage 3:** The code actually compiles and runs successfully.
+
+**Examples of how to type the commit command:**
+
+* If you finished everything perfectly and it runs:
+  `git commit -m "Final Submission: Completed stages 1, 2, and 3"`
+
+* If you found the spot and wrote the logic, but it had a bug and didn't run:
+  `git commit -m "Final Submission: Completed stages 1 and 2"`
+
+* If you only found where to put the code but didn't finish the logic:
+  `git commit -m "Final Submission: Completed stage 1"`
