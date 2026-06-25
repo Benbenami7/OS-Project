@@ -199,3 +199,44 @@ Implementing the scheduler allowed us to observe the direct impact of scheduling
 - **FCFS (First Come First Serve):** Travelers are granted access strictly based on their arrival time. While perfectly fair, this can cause a "convoy effect." If a traveler with a very long remaining route holds the node, quicker travelers must wait a significant amount of time, increasing the overall average wait time.
 - **SJF (Shortest Job First):** Priority is given to the traveler with the shortest total Dijkstra path weight. This highly optimizes throughput and reduces the average wait time, as quick travelers clear the intersection rapidly. However, it completely compromises fairness—a traveler with a long route might suffer from starvation if shorter jobs keep arriving at the node.
 `
+
+
+
+---
+<br><br><br>
+
+# 🛑🛑🛑 EXAM CHEATSHEET - DELETE BEFORE FINAL PUSH 🛑🛑🛑
+
+## 1. פקודות חובה למבחן (העתק-הדבק לטרמינל)
+**התקנת Raylib על מחשבי המכללה (פקודה אחרי פקודה):**
+`sudo apt update`
+`sudo apt install libraylib-dev`
+
+**סדר עבודה בגיט (Git Workflow):**
+1. הורדת הקוד: `git clone https://github.com/Benbenami7/OS-Project.git`
+2. כניסה לתיקייה: `cd OS-Project`
+3. פתיחת ענף למבחן: `git checkout -b exam_a/YOUR_ID_HERE`
+4. קימפול: `make clean` ואז `make milestone4` (לשנות בהתאם לשלב)
+5. שמירה: `git add .`
+6. צירוף הודעה: `git commit -m "1 - found code, 2 - logic works"`
+7. דחיפה לשרת: `git push origin exam_a/YOUR_ID_HERE`
+
+## 2. מפת ההתמצאות בקוד (איפה לחפש?)
+* **`main_sim.c`**: זה רק מנהל העבודה. טוען קבצים ומנתב את התוכנית לפי ה-Milestone. הלוגיקה של התהליכים לא פה!
+* **`gui.c`**: כאן קורה כל הקסם של המערכת ההפעלה. 
+  * חיפוש יצירת תהליכים: תריץ בטרמינל `grep -n "fork" gui.c`
+  * חיפוש הריגת תהליכים (האב): תריץ בטרמינל `grep -n "kill" gui.c`
+
+## 3. מבנה פתרון לסיגנלים (Signals - כנראה M4)
+אם מבקשים לשנות את סיגנל המוות (SIGKILL) לסיגנל מותאם אישית (SIGUSR1):
+
+**א. בצד של תהליך הבן (בתוך ה-if pid == 0 ב-gui.c):**
+```c
+// פונקציית טיפול שיושבת מחוץ ל-main (למעלה בקובץ)
+static void my_handler(int sig) {
+    printf("Received signal!\n");
+    exit(0);
+}
+
+// בתוך קוד הבן (מיד אחרי ה-fork)
+signal(SIGUSR1, my_handler);
