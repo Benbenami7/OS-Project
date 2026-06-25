@@ -437,6 +437,10 @@ void run_gui(Graph* g) {
     int path[MAX_NODES];
     int path_len = 0;
     int total_weight = 0;
+    
+    // 🎯 EXAM HOTSPOT 1: DIJKSTRA ALGORITHM CALL
+    // If the exam asks you to change how the path is calculated (e.g., avoid a specific node, 
+    // or use a different algorithm), the path array is populated right here.
     bool has_path = get_dijkstra_path(g, path, &path_len, &total_weight);
 
     SetConfigFlags(FLAG_MSAA_4X_HINT);
@@ -574,6 +578,10 @@ static void init_milestone4_traveler(const Graph* g, TravelerSim* traveler, cons
 static void fork_milestone4_children(TravelerSim travelers[], int traveler_count) {
     for (int i = 0; i < traveler_count; i++) {
         pid_t pid = fork();
+        
+        // 🎯 EXAM HOTSPOT 2: FORK FAILURE HANDLING
+        // If they ask what to do when fork fails (e.g., print specific error and exit),
+        // you add your exit(1) or custom error handling inside this block.
         if (pid == -1) {
             perror("fork");
             travelers[i].pid = -1;
@@ -584,12 +592,10 @@ static void fork_milestone4_children(TravelerSim travelers[], int traveler_count
             printf("[%d] started\n", (int)getpid());
             fflush(stdout);
             
-            // =====================================================
-            // EXAM HOTSPOT: SIGNAL HANDLING (SIGUSR1 task)
+            // 🎯 EXAM HOTSPOT 3: SIGNAL HANDLING IN CHILD
             // If the exam asks you to handle SIGUSR1 instead of dying, 
             // you should place your signal(SIGUSR1, my_handler) right here
             // before the infinite loop.
-            // =====================================================
             for (;;) {
                 pause();
             }
@@ -627,14 +633,15 @@ void run_gui_milestone4(Graph* g, const TravelerRequest requests[], int traveler
             advance_path_traveler(g, &travelers[i], positions, dt);
 
             if (travelers[i].done && !travelers[i].terminate_sent) {
-                // =====================================================
-                // EXAM HOTSPOT: SENDING SIGNALS TO CHILDREN
-                // If the exam asks to send SIGUSR1 instead of killing the child,
-                // you would modify the signal sent inside terminate_child()
-                // =====================================================
+                // 🎯 EXAM HOTSPOT 4: PARENT SENDING SIGNALS TO CHILD
+                // If they ask to send a different signal (like SIGSTOP) instead of killing,
+                // you need to modify the terminate_child() function called right here.
                 terminate_child(&travelers[i]);
             }
             if (travelers[i].done || was_done) {
+                // 🎯 EXAM HOTSPOT 5: REAPING ZOMBIES
+                // waitpid() with WNOHANG happens inside reap_child_nonblocking.
+                // This is what prevents zombie processes from lingering.
                 reap_child_nonblocking(&travelers[i]);
             }
         }
@@ -672,6 +679,10 @@ static bool write_all(int fd, const char* data, size_t len) {
 
 static bool child_send_arrival(int fd, int node, int next_node) {
     char line[IPC_LINE_SIZE];
+    
+    // 🎯 EXAM HOTSPOT 6: FORMATTING IPC MESSAGES (snprintf)
+    // If you need to send new data to the parent (like weight, ticket, etc.),
+    // you MUST change the format string here. Example: "ARRIVED %d %d %d\n"
     int len = snprintf(line, sizeof(line), "ARRIVED %d %d\n", node, next_node);
     if (len < 0 || len >= (int)sizeof(line)) return false;
     return write_all(fd, line, (size_t)len);
@@ -711,7 +722,9 @@ static void run_milestone5_child(const Graph* g, TravelerRequest request, int wr
     int path_len = 0;
     int total_weight = 0;
 
-    // EXAM HOTSPOT: Child computes its own Dijkstra here
+    // 🎯 EXAM HOTSPOT 7: CHILD LOGIC BEFORE MOVING
+    // If they ask: "Child checks condition X before moving, and if false, sends ERROR",
+    // you put that check right here, before the movement loop starts.
     if (!get_dijkstra_path_between(g, request.source, request.destination, path, &path_len, &total_weight)) {
         child_send_finished(write_fd);
         close(write_fd);
@@ -748,6 +761,10 @@ static bool init_node_semaphores(const Graph* g, sem_t* node_sems[], char sem_na
     for (int i = 0; i < g->num_nodes; i++) {
         snprintf(sem_names[i], SEM_NAME_SIZE, "/osgraph_%ld_%d", (long)getpid(), i);
         sem_unlink(sem_names[i]);
+        
+        // 🎯 EXAM HOTSPOT 8: SEMAPHORE CAPACITY (MUTEX vs COUNTING)
+        // The last parameter '1' means this is a Mutex (1 traveler per node).
+        // EXAM QUESTION: "Allow 3 travelers per node" -> Change the '1' to '3' here!
         node_sems[i] = sem_open(sem_names[i], O_CREAT | O_EXCL, 0600, 1);
         if (node_sems[i] == SEM_FAILED) {
             perror("sem_open");
@@ -842,7 +859,8 @@ static void run_milestone6_child(const Graph* g, TravelerRequest request, int wr
         int current = path[i];
         int next = path[i + 1];
 
-        // Entering Critical Section
+        // 🎯 EXAM HOTSPOT 9: ENTERING CRITICAL SECTION (sem_wait)
+        // This function calls sem_wait. If the node is locked, it blocks here.
         if (!wait_for_node_lock(write_fd, node_sems, current)) {
             child_send_message(write_fd, "ERROR semaphore_wait");
             child_send_finished(write_fd);
@@ -864,8 +882,11 @@ static void run_milestone6_child(const Graph* g, TravelerRequest request, int wr
             _exit(0);
         }
 
-        // Leaving Critical Section
+        // 🎯 EXAM HOTSPOT 10: LEAVING CRITICAL SECTION (sem_post)
+        // The child frees the node for the next traveler.
+        // DO NOT put any sleep related to this node AFTER this line.
         sem_post(node_sems[current]);
+        
         sleep_edge_steps(g, current, next);
     }
 
@@ -1011,6 +1032,9 @@ static void handle_ipc_line(TravelerSim* traveler, const Vector2 positions[], co
     int node = -1;
     int next_node = -1;
 
+    // 🎯 EXAM HOTSPOT 11: PARSING IPC MESSAGES (sscanf)
+    // If the exam asks you to add a NEW message type (e.g., "HELP_ME <node>"), 
+    // you must add a new 'else if' block here. Use sscanf to extract numbers.
     if (sscanf(line, "ARRIVED %d %d", &node, &next_node) == 2) {
         traveler->has_path = true;
         traveler->current_node = node;
@@ -1238,6 +1262,7 @@ void run_gui_milestone6(Graph* g, const TravelerRequest requests[], int traveler
     cleanup_children(travelers, traveler_count);
     cleanup_node_semaphores(g, node_sems, sem_names);
 }
+
 // =================================================================
 // MILESTONE 7: PARENT-MANAGED SCHEDULING (FCFS / SJF)
 // =================================================================
@@ -1269,7 +1294,7 @@ static void run_milestone7_child(const Graph* g, TravelerRequest request, int wr
         int current = path[i];
         int next = path[i + 1];
 
-        // EXAM HOTSPOT: Child asks parent for permission and goes to sleep
+        // Child asks parent for permission and goes to sleep
         child_send_node_message(write_fd, "WAITING_FOR_NODE", current);
         sem_wait(my_sem); 
 
@@ -1372,13 +1397,14 @@ void run_gui_milestone7(Graph* g, const TravelerRequest requests[], int traveler
         float dt = GetFrameTime();
         read_ipc_messages(travelers, traveler_count, positions);
 
-        // 1. CLEAR OCCUPANTS: If a traveler left the node, mark it as free
+        // 🎯 EXAM HOTSPOT 12: FREEING NODES
+        // The scheduler first checks if nodes became free before assigning them.
         for (int i = 0; i < traveler_count; i++) {
             TravelerSim* t = &travelers[i];
             for (int n = 0; n < MAX_NODES; n++) {
                 if (node_occupant[n] == t->id) {
                     if (t->done || t->state == SIM_MOVING || (t->waiting && t->waiting_node != n)) {
-                        node_occupant[n] = -1;
+                        node_occupant[n] = -1; // Node is free!
                     }
                 }
             }
@@ -1396,7 +1422,9 @@ void run_gui_milestone7(Graph* g, const TravelerRequest requests[], int traveler
                         // Assign a timestamp ticket for FCFS
                         if (request_tickets[i] == 0) request_tickets[i] = global_ticket++;
 
-                        // EXAM HOTSPOT: Here is the scheduling logic!
+                        // 🎯 EXAM HOTSPOT 13: SCHEDULING ALGORITHM (SCORE)
+                        // Modify this line to implement a new algorithm like LDF. 
+                        // The traveler with the lowest 'score' wins the node.
                         int score = is_sjf ? t->total_weight : request_tickets[i];
                         
                         if (best_candidate == -1 || score < best_score) {
@@ -1410,7 +1438,8 @@ void run_gui_milestone7(Graph* g, const TravelerRequest requests[], int traveler
                     node_occupant[n] = travelers[best_candidate].id;
                     request_tickets[best_candidate] = 0; // Reset ticket for next wait
                     
-                    // WAKE UP THE SELECTED CHILD!
+                    // 🎯 EXAM HOTSPOT 14: PARENT WAKES UP CHILD
+                    // Parent calls sem_post on the chosen traveler's private semaphore.
                     sem_post(trav_sems[best_candidate]);
                 }
             }
