@@ -56,6 +56,7 @@ typedef struct {
     Color color;
     char ipc_buffer[IPC_LINE_SIZE];
     int ipc_len;
+    int ack_fd;
 } TravelerSim;
 
 // =================================================================
@@ -717,7 +718,7 @@ static bool child_send_left_node(int fd, int node, int next_node) {
 // =================================================================
 // MILESTONE 5: AUTONOMOUS CHILD (IPC)
 // =================================================================
-static void run_milestone5_child(const Graph* g, TravelerRequest request, int write_fd) {
+static void run_milestone5_child(const Graph* g, TravelerRequest request, int write_fd, int read_ack_fd) {
     int path[MAX_NODES];
     int path_len = 0;
     int total_weight = 0;
@@ -740,6 +741,8 @@ static void run_milestone5_child(const Graph* g, TravelerRequest request, int wr
             _exit(0);
         }
         if (next == -1) break;
+        char ack_buf[16];
+        read(read_ack_fd, ack_buf, sizeof(ack_buf));
 
         if (i > 0) sleep_seconds(NODE_WAIT_SECONDS);
 
@@ -932,10 +935,13 @@ static bool set_nonblocking(int fd) {
 // =================================================================
 static void fork_milestone5_children(const Graph* g, TravelerSim travelers[], int traveler_count) {
     int pipes[MAX_TRAVELERS][2];
+    int ack_pipes[MAX_TRAVELERS][2];
     for (int i = 0; i < traveler_count; i++) {
         pipes[i][0] = -1;
         pipes[i][1] = -1;
-        if (pipe(pipes[i]) == -1) {
+        ack_pipes[i][0] = -1; 
+        ack_pipes[i][1] = -1;
+        if (pipe(pipes[i]) == -1 || pipe(ack_pipes[i]) == -1) {
             perror("pipe");
             travelers[i].done = true;
         }
@@ -958,16 +964,20 @@ static void fork_milestone5_children(const Graph* g, TravelerSim travelers[], in
             for (int j = 0; j < traveler_count; j++) {
                 if (pipes[j][0] != -1) close(pipes[j][0]);
                 if (j != i && pipes[j][1] != -1) close(pipes[j][1]);
+                if (ack_pipes[j][1] != -1) close(ack_pipes[j][1]); 
+                if (j != i && ack_pipes[j][0] != -1) close(ack_pipes[j][0]);
             }
-            run_milestone5_child(g, travelers[i].request, pipes[i][1]);
+            run_milestone5_child(g, travelers[i].request, pipes[i][1], ack_pipes[i][0]);
         }
         travelers[i].pid = pid;
     }
 
     for (int i = 0; i < traveler_count; i++) {
         if (pipes[i][1] != -1) close(pipes[i][1]);
+        if (ack_pipes[i][0] != -1) close(ack_pipes[i][0]);
         if (pipes[i][0] != -1 && travelers[i].pid > 0) {
             travelers[i].pipe_fd = pipes[i][0];
+            travelers[i].ack_fd = ack_pipes[i][1];
             travelers[i].pipe_open = true;
             if (!set_nonblocking(travelers[i].pipe_fd)) perror("fcntl");
         } else if (pipes[i][0] != -1) {
@@ -1044,7 +1054,10 @@ static void handle_ipc_line(TravelerSim* traveler, const Vector2 positions[], co
         traveler->jump_index = 0;
         if (node >= 0 && node < MAX_NODES) traveler->position = positions[node];
 
-        if (next_node >= 0) printf("[PID=%d] arrived at node %d | next node: %d\n", (int)traveler->pid, node, next_node);
+        if (next_node >= 0){
+            printf("[PID=%d] arrived at node %d | next node: %d\n", (int)traveler->pid, node, next_node);
+            write(traveler->ack_fd, "OK", 2);
+        }
         else {
             traveler->done = true;
             printf("[PID=%d] arrived at node %d | DESTINATION\n", (int)traveler->pid, node);
